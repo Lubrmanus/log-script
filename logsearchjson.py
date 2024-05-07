@@ -1,9 +1,10 @@
 import json
-import requests
+import aiohttp # type: ignore
 import re
 import time
-import threading
 import logging
+import asyncio
+import threading
 
 # Nastavení logování
 logging.basicConfig(filename='monitoring.log', level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -41,21 +42,30 @@ def search_logs(log_path, search_conditions):
 
 def monitor_rule(rule):
     """Vyhodnotí, zda podmínky pro odeslání alertu byly splněny."""
-    alert_history = []
     while True:
-        start_time = time.time()
+        found_logs = search_logs(rule['log_path'], rule['search_conditions'])
+        alert_needed = evaluate_alert_needed(rule, found_logs)
+
+        if alert_needed:
+            asyncio.run(send_to_opsgenie(rule, found_logs, rule['api_key']))
+
+        time.sleep(max(1, rule['interval']))  # Ensure at least the interval wait
+
+def evaluate_alert_needed(rule, found_logs):
+    """Prohledá log soubor na základě seznamu hledaných podmínek, které mohou být termíny nebo regulární výrazy."""
+    while True:
         found_logs = search_logs(rule['log_path'], rule['search_conditions'])
         current_time = time.time()
         alert_needed = False
 
-        if rule['alerting_strategy']['type'] == "immediate":
+        if rule['alerting_strategy']['type'] == "immediate": # Najdu chybu vystavim alert
             alert_needed = bool(found_logs)
-        elif rule['alerting_strategy']['type'] == "delayed":
+        elif rule['alerting_strategy']['type'] == "delayed": # najdu chybu a cekam (zvolenou dobu v JSON) , pokud prijde dalsi chyba vystavim alert
             alert_history.extend([(log, current_time) for log in found_logs])
             alert_history = [(log, timestamp) for log, timestamp in alert_history if current_time - timestamp < rule['alerting_strategy']['delay']]
             if found_logs and any(current_time - timestamp < rule['alerting_strategy']['delay'] for _, timestamp in alert_history):
                 alert_needed = True
-        elif rule['alerting_strategy']['type'] == "cumulative":
+        elif rule['alerting_strategy']['type'] == "cumulative": # najdu chybu a pokud do (zvolenou dobu v JSON) prijde (zvoleny pocet v JSONu) chyb vystavim alert
             alert_history.extend([(log, current_time) for log in found_logs])
             alert_history = [(log, timestamp) for log, timestamp in alert_history if current_time - timestamp < rule['alerting_strategy']['delay']]
             if len(alert_history) >= rule['alerting_strategy']['threshold']:
@@ -66,10 +76,8 @@ def monitor_rule(rule):
         else:
             print(f"No alert triggered for {rule['name']} on {rule['hosts']}")
 
-        elapsed = time.time() - start_time
-        time.sleep(max(1 - elapsed, 0))  # Ensure that we wait at least 1 second
 
-def send_to_opsgenie(rule, found_logs, api_key):
+async def send_to_opsgenie(rule, found_logs, api_key):
     url = "https://api.opsgenie.com/v2/alerts"
     headers = {
         "Authorization": "GenieKey " + api_key,
@@ -84,8 +92,9 @@ def send_to_opsgenie(rule, found_logs, api_key):
             "description": "\n".join(found_logs),
             "priority": rule['priority']  # Nasetovana priorina na urovni JSONu
         }
-        response = requests.post(url, headers=headers, json=post_data, timeout=5)
-        logging.info(f"Sent alert for {rule['name']}. Status Code: {response.status_code}")
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, headers=headers, json=post_data, timeout=30) as response:
+                logging.info(f"Sent alert for {rule['name']}. Status Code: {await response.status()}")
     else:
         logging.info(f"No logs found to trigger alert for {rule['name']}.")       
 
