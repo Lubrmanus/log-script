@@ -1,14 +1,27 @@
 ---
-- name: Rolling Update for Web Application
+- name: Rolling Update for Web Application with Production Enhancements
   hosts: web_servers
-  serial: 1  # Aktualizuje po jednom serveru, lze upravit podle potřeb
+  serial: 1  # Update one server at a time to minimize disruption
   become: yes
   vars:
     app_directory: "/var/www/html/myapp"
     app_git_repo: "https://github.com/your_username/your_app_repo.git"
     app_port: 80
+    backup_directory: "/backup/myapp"
 
   tasks:
+    - name: Ensure backup directory exists
+      file:
+        path: "{{ backup_directory }}"
+        state: directory
+
+    - name: Backup current application
+      synchronize:
+        src: "{{ app_directory }}/"
+        dest: "{{ backup_directory }}"
+        delete: no
+        recursive: yes
+
     - name: Pull the latest version of the application
       git:
         repo: "{{ app_git_repo }}"
@@ -27,13 +40,13 @@
       shell: |
         cd {{ app_directory }}
         pkill -f 'node' || true
-nohup node app.js > /dev/null 2>&1 &
+        nohup node app.js > /dev/null 2>&1 &
       args:
         executable: /bin/bash
 
     - name: Wait for application to restart
       pause:
-        seconds: 10  # Zajistěte dostatek času pro restart
+        seconds: 10  # Ensure the app has time to restart
 
     - name: Verify if the application is running correctly
       uri:
@@ -52,6 +65,33 @@ nohup node app.js > /dev/null 2>&1 &
         msg: "Deployment failed on {{ inventory_hostname }}."
       when: result.status != 200
 
-    - name: Pause between deployments
-      pause:
-        seconds: 30  # Přizpůsobte délku pauzy vašim potřebám
+    - name: Send notification to Slack
+      uri:
+        url: "https://hooks.slack.com/services/T00000000/B00000000/XXXXXXXXXXXXXXXXXXXXXXXX"
+        method: POST
+        body_format: json
+        body: "{{ {'text': 'Deployment of application on {{ inventory_hostname }}: ' + (result.status == 200 | ternary('SUCCESS', 'FAILED')) } }}"
+      when: result.status != 200 or result.status == 200
+
+    - name: Rollback if deployment failed
+      block:
+        - name: Restore from backup
+          synchronize:
+            src: "{{ backup_directory }}/"
+            dest: "{{ app_directory }}"
+            delete: yes
+            recursive: yes
+        - name: Restart application after rollback
+          shell: |
+            cd {{ app_directory }}
+            pkill -f 'node' || true
+            nohup node app.js > /dev/null 2>&1 &
+          args:
+            executable: /bin/bash
+      when: result.status != 200
+
+    - name: Cleanup backups if deployment is successful
+      file:
+        path: "{{ backup_directory }}"
+        state: absent
+      when: result.status == 200
