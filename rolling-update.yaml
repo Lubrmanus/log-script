@@ -1,0 +1,57 @@
+---
+- name: Rolling Update for Web Application
+  hosts: web_servers
+  serial: 1  # Aktualizuje po jednom serveru, lze upravit podle potřeb
+  become: yes
+  vars:
+    app_directory: "/var/www/html/myapp"
+    app_git_repo: "https://github.com/your_username/your_app_repo.git"
+    app_port: 80
+
+  tasks:
+    - name: Pull the latest version of the application
+      git:
+        repo: "{{ app_git_repo }}"
+        dest: "{{ app_directory }}"
+        clone: yes
+        update: yes
+
+    - name: Install dependencies
+      shell: |
+        cd {{ app_directory }}
+        npm install
+      args:
+        executable: /bin/bash
+
+    - name: Restart the application
+      shell: |
+        cd {{ app_directory }}
+        pkill -f 'node' || true
+nohup node app.js > /dev/null 2>&1 &
+      args:
+        executable: /bin/bash
+
+    - name: Wait for application to restart
+      pause:
+        seconds: 10  # Zajistěte dostatek času pro restart
+
+    - name: Verify if the application is running correctly
+      uri:
+        url: "http://{{ inventory_hostname }}:{{ app_port }}/"
+        method: GET
+        status_code: 200
+      register: result
+
+    - name: Output the result of the deployment
+      debug:
+        msg: "The application on {{ inventory_hostname }} is up and running!"
+      when: result.status == 200
+
+    - name: Fail if the application did not start correctly
+      fail:
+        msg: "Deployment failed on {{ inventory_hostname }}."
+      when: result.status != 200
+
+    - name: Pause between deployments
+      pause:
+        seconds: 30  # Přizpůsobte délku pauzy vašim potřebám
