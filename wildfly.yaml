@@ -1,56 +1,56 @@
 ---
-- name: Nasazeni Java aplikace na WildFly server
-  hosts: your_server_group
+- name: Deploy and verify web application
+  hosts: your_servers
   become: yes
-
   vars:
-    java_home: "/opt/java"
-    wildfly_home: "/opt/wildfly"
-    wildfly_user: "wildfly"
-    wildfly_group: "wildfly"
-    wildfly_version: "25.0.1.Final"
-    wildfly_url: "https://download.jboss.org/wildfly/{{ wildfly_version }}/wildfly-{{ wildfly_version }}.zip"
-    app_url: "http://example.com/path/to/your/app.war"
-    app_name: "your_app.war"
+    app_directory: "/var/www/html/myapp"
+    app_git_repo: "https://github.com/your_username/your_app_repo.git"
+    app_port: 80
 
   tasks:
-    - name: Instalace Java JDK
+    - name: Install git
       apt:
-        name: openjdk-11-jdk
+        name: git
         state: present
 
-    - name: Pridani uzivatele pro WildFly
-      user:
-        name: "{{ wildfly_user }}"
-        group: "{{ wildfly_group }}"
-        system: yes
-        state: present
+    - name: Clone application repository
+      git:
+        repo: "{{ app_git_repo }}"
+        dest: "{{ app_directory }}"
+        clone: yes
+        update: yes
 
-    - name: Stazeni WildFly
-      get_url:
-        url: "{{ wildfly_url }}"
-        dest: "/tmp/wildfly-{{ wildfly_version }}.zip"
+    - name: Install dependencies
+      shell: |
+        cd {{ app_directory }}
+        npm install
+      args:
+        executable: /bin/bash
 
-    - name: Rozbaleni WildFly
-      unarchive:
-        src: "/tmp/wildfly-{{ wildfly_version }}.zip"
-        dest: "/opt/"
-        creates: "{{ wildfly_home }}/bin/standalone.sh"
-        extra_opts: [--strip-components=1]
-        owner: "{{ wildfly_user }}"
-        group: "{{ wildfly_group }}"
+    - name: Start the application
+      shell: |
+        cd {{ app_directory }}
+        nohup node app.js > /dev/null 2>&1 &
+      args:
+        executable: /bin/bash
 
-    - name: Nasazeni aplikace
-      get_url:
-        url: "{{ app_url }}"
-        dest: "{{ wildfly_home }}/standalone/deployments/{{ app_name }}"
-        mode: '0755'
-        owner: "{{ wildfly_user }}"
-        group: "{{ wildfly_group }}"
-      notify: Restart WildFly
+    - name: Wait for application to start
+      pause:
+        seconds: 10
 
-  handlers:
-    - name: Restart WildFly
-      systemd:
-        name: wildfly
-        state: restarted
+    - name: Check if web service is accessible
+      uri:
+        url: "http://{{ inventory_hostname }}:{{ app_port }}/"
+        method: GET
+        status_code: 200
+      register: result
+
+    - name: Output result
+      debug:
+        msg: "The web service is up and running!"
+      when: result.status == 200
+
+    - name: Fail if web service is not accessible
+      fail:
+        msg: "Failed to access the web service."
+      when: result.status != 200
