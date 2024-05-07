@@ -1,0 +1,19 @@
+- name: Verify deployment
+  hosts: your_servers
+  tasks:
+    - name: Check if web service is accessible
+      uri:
+        url: http://{{ inventory_hostname }}:port/
+        method: GET
+        status_code: 200
+      register: result
+
+    - name: Output result
+      debug:
+        msg: "The web service is up and running!"
+      when: result.status == 200
+
+    - name: Fail if web service is not accessible
+      fail:
+        msg: "Failed to access the web service."
+      when: result.status != 200
