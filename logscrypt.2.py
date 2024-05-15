@@ -92,7 +92,7 @@ async def send_to_opsgenie(rule, found_logs, api_key):
     else:
         logging.info(f"No logs found to trigger alert for {rule['name']}.")       
 
-async def monitor():
+def monitor():
     """Hlavní monitorovací funkce."""
     json_path = 'matice.json'
     with open(json_path, 'r') as file:
@@ -110,7 +110,7 @@ async def monitor():
 
     try:
         while True:
-            await asyncio.sleep(1)
+            time.sleep(1)
     except KeyboardInterrupt:
         for observer in observers:
             observer.stop()
@@ -119,4 +119,4 @@ async def monitor():
 
 
 if __name__ == "__main__":
-    asyncio.run(monitor())
+    monitor()
